@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "cino-bar.fullname" . }}-frontend-config
+  labels:
+    {{- include "cino-bar.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+data:
+  API_BASE_URL: {{ include "cino-bar.backendURL" . | quote }}

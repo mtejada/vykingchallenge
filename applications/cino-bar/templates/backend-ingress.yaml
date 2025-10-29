@@ -1,0 +1,38 @@
+{{- if and .Values.backend.ingress .Values.backend.ingress.enabled }}
+{{- $root := . }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "cino-bar.fullname" $root }}-backend
+  labels:
+    {{- include "cino-bar.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: backend
+  annotations:
+    traefik.ingress.kubernetes.io/router.middlewares: {{ printf "%s-%s-backend-prefix@kubernetescrd" .Release.Namespace (include "cino-bar.fullname" $root) }}
+    {{- with $root.Values.backend.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- with $root.Values.backend.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  rules:
+    {{- range $root.Values.backend.ingress.hosts }}
+    - host: {{ .host }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType }}
+            backend:
+              service:
+                name: {{ include "cino-bar.fullname" $root }}-backend
+                port:
+                  number: {{ $root.Values.backend.service.port }}
+          {{- end }}
+    {{- end }}
+  {{- with $root.Values.backend.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

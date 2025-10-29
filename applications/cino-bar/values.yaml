@@ -1,0 +1,95 @@
+global:
+  domain: cinobar.dev
+  corsAllowedOrigins:
+  - https://cinobar.dev
+  - https://www.cinobar.dev
+frontend:
+  replicaCount: 2
+  image:
+    repository: maximilianotejada/cino-frontend
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 80
+  ingress:
+    className: traefik
+    annotations: {}
+    hosts:
+    - host: cinobar.dev
+      paths:
+      - path: /
+        pathType: Prefix
+    - host: www.cinobar.dev
+      paths:
+      - path: /
+        pathType: Prefix
+    tls:
+    - secretName: cinobar-dev-cert
+      hosts:
+      - cinobar.dev
+      - www.cinobar.dev
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+backend:
+  replicaCount: 2
+  image:
+    repository: maximilianotejada/cino-backend
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8080
+    targetPort: 8080
+  ingress:
+    enabled: true
+    className: traefik
+    annotations: {}
+    hosts:
+    - host: api.cinobar.dev
+      paths:
+      - path: /
+        pathType: Prefix
+    tls:
+    - secretName: cinobar-dev-cert
+      hosts:
+      - api.cinobar.dev
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 300m
+      memory: 256Mi
+database:
+  serviceName: mysql
+  serviceNamespace: infrastructure
+  host: ''
+  port: 3306
+  name: cino_db
+  user: cino
+  secretName: mysql-credentials
+  secretKey: password
+externalSecrets:
+  enabled: true
+  refreshInterval: 1h
+  secretStoreRef:
+    name: vault-cino
+    kind: ClusterSecretStore
+  serviceAccount:
+    create: true
+    name: ''
+  target:
+    name: ''
+    creationPolicy: Owner
+  data:
+    databasePassword:
+      secretKey: ''
+      remoteKey: cino/prod/backend
+      remoteProperty: DB_PASSWORD

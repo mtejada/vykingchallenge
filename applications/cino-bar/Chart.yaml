@@ -1,0 +1,6 @@
+apiVersion: v2
+name: cino-bar
+description: Single Chart for Cino Bar application (Frontend & Backend).
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

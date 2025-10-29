@@ -1,0 +1,11 @@
+server:
+  service:
+    type: NodePort
+  ingress:
+    enabled: false
+
+controller:
+  replicas: 1
+
+repoServer:
+  replicas: 1

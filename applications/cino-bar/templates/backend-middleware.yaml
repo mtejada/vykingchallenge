@@ -1,0 +1,14 @@
+{{- if and .Values.backend.ingress .Values.backend.ingress.enabled }}
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ include "cino-bar.fullname" . }}-backend-prefix
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cino-bar.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  replacePathRegex:
+    regex: ^/(?:api/v1/)?(.*)
+    replacement: /api/v1/$1
+{{- end }}
