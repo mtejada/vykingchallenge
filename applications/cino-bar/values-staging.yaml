@@ -1,0 +1,43 @@
+global:
+  domain: staging-cinobar.dev
+  corsAllowedOrigins:
+  - https://staging-cinobar.dev
+  - https://www.staging-cinobar.dev
+frontend:
+  image:
+    tag: 1.2-staging
+  ingress:
+    hosts:
+    - host: staging-cinobar.dev
+      paths:
+      - path: /
+        pathType: Prefix
+    - host: www.staging-cinobar.dev
+      paths:
+      - path: /
+        pathType: Prefix
+    tls:
+    - secretName: staging-cinobar-dev-cert
+      hosts:
+      - staging-cinobar.dev
+      - www.staging-cinobar.dev
+backend:
+  image:
+    tag: 1.1-staging
+  ingress:
+    hosts:
+    - host: api.staging-cinobar.dev
+      paths:
+      - path: /
+        pathType: Prefix
+    tls:
+    - secretName: staging-cinobar-dev-cert
+      hosts:
+      - api.staging-cinobar.dev
+database:
+  serviceName: mysql-staging
+  secretName: mysql-credentials-staging
+externalSecrets:
+  data:
+    databasePassword:
+      remoteKey: cino/staging/backend

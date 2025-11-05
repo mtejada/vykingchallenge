@@ -20,8 +20,8 @@ terraform {
 locals {
   kube_context_arg = var.kube_context != null && var.kube_context != "" ? "--context=${var.kube_context}" : ""
   external_secrets_vault_provider = merge({
-    server = var.external_secrets_vault_server
-    path   = var.external_secrets_vault_path
+    server  = var.external_secrets_vault_server
+    path    = var.external_secrets_vault_path
     version = "v2"
     auth = {
       kubernetes = {
@@ -49,8 +49,8 @@ provider "helm" {
 }
 
 provider "kubectl" {
-  config_path    = var.kubeconfig
-  config_context = var.kube_context
+  config_path       = var.kubeconfig
+  config_context    = var.kube_context
   apply_retry_count = 5
 }
 
@@ -104,7 +104,7 @@ resource "null_resource" "wait_for_external_secrets_crds" {
 resource "kubectl_manifest" "vault_cluster_secret_store" {
   depends_on = [
     null_resource.wait_for_external_secrets_crds,
-    kubernetes_service_account.external_secrets_target
+    kubernetes_service_account.external_secrets_operator
   ]
 
   yaml_body = yamlencode({
@@ -121,10 +121,14 @@ resource "kubectl_manifest" "vault_cluster_secret_store" {
   })
 }
 
-resource "kubernetes_service_account" "external_secrets_target" {
+resource "kubernetes_service_account" "external_secrets_operator" {
+  depends_on = [
+    helm_release.external_secrets
+  ]
+
   metadata {
     name      = var.external_secrets_service_account_name
-    namespace = kubernetes_namespace.applications.metadata[0].name
+    namespace = var.external_secrets_service_account_namespace
     labels = {
       app = "external-secrets-bootstrap"
     }
