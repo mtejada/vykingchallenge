@@ -74,14 +74,18 @@ variable "external_secrets_service_account_namespace" {
   type        = string
   default     = "cino-bar"
 }
-
 variable "git_repo_url" {
   description = "Git repository URL that Argo CD should track."
   type        = string
 }
 
-variable "git_target_revision" {
-  description = "Branch, tag, or commit for Argo CD Applications."
+variable "git_target_revision_staging" {
+  description = "staging branch for Staging Argo CD Application"
+  type        = string
+  default     = "staging"
+}
+variable "git_target_revision_prod" {
+  description = "staging branch for Production Argo CD Application"
   type        = string
   default     = "main"
 }
@@ -92,8 +96,13 @@ variable "infrastructure_namespace" {
   default     = "infrastructure"
 }
 
-variable "applications_namespace" {
-  description = "Target namespace for application workloads managed by Argo CD."
+variable "applications_namespace_prod" {
+  description = "Target prod namespace for application workloads managed by Argo CD."
   type        = string
-  default     = "cino-bar"
+  default     = "cino-bar-prod"
+}
+variable "applications_namespace_staging" {
+  description = "Target staging namespace for application workloads managed by Argo CD."
+  type        = string
+  default     = "cino-bar-staging"
 }

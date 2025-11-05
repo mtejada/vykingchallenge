@@ -59,7 +59,8 @@ Copy or edit `terraform/terraform.tfvars` so it reflects your environment:
 
 ```hcl
 external_secrets_vault_server = "http://host.k3d.internal:8200"   # Vault URL reachable by the cluster
-external_secrets_service_account_namespace = "cino-bar"   # Namespace where ESO runs
+external_secrets_service_account_namespace = "external-secrets"   # Namespace where ESO runs
+external_secrets_service_account_name      = "cino-bar"            # Service account ESO uses to auth with Vault
 kubeconfig = "/absolute/path/to/your/kubeconfig"
 git_repo_url = "git@github.com:mtejada/vykingchallenge.git" 
 ```
@@ -77,8 +78,9 @@ You have two options:
 2. Create a KV-v2 secret engine at `secret/` (or adjust `terraform/variables.tf` to match your path).
 3. Create the following secrets:
    - `secret/cino/prod/backend` with key `DB_PASSWORD`.
+   - `secret/cino/staging/backend` with key `DB_PASSWORD`.
    - `secret/argocd/git` containing `url`, `sshPrivateKey`, and `sshKnownHosts` (used by Argo CD to pull this repo).
-4. Ensure the Vault role specified by `external_secrets_vault_role` (defaults to `cino-backend`) is bound to the Kubernetes service account that External Secrets Operator uses (`cino-bar-external-secrets` in namespace `cino-bar`).
+4. Ensure the Vault role specified by `external_secrets_vault_role` (defaults to `cino-backend`) is bound to the Kubernetes service account that External Secrets Operator uses (`cino-bar` in namespace `external-secrets`).
 
 ### 4.2 Run a local Vault container
 
@@ -112,8 +114,9 @@ export VAULT_TOKEN=<root token from docker logs>
 vault secrets enable -path=secret kv-v2
 # (If you see "path is already in use at secret/", the dev container already mounted it—skip this step or run `vault secrets disable secret` first to reset.)
 
-# Seed application secrets
-vault kv put secret/cino/prod/backend DB_PASSWORD="<database password>"
+# Seed application secrets (use different values if you want prod/staging separation)
+vault kv put secret/cino/prod/backend DB_PASSWORD="<prod database password>"
+vault kv put secret/cino/staging/backend DB_PASSWORD="<staging database password>"
 
 # Store the Argo CD deploy key (generate one if you do not have it yet)
 # sshKnownHosts should contain the host key from: ssh-keyscan -t ed25519 github.com
@@ -125,6 +128,7 @@ vault kv put secret/argocd/git \
 # Allow read-only access to those secrets
 vault policy write cino-backend - <<'HCL'
 path "secret/data/cino/prod/backend" { capabilities = ["read"] }
+path "secret/data/cino/staging/backend" { capabilities = ["read"] }
 path "secret/data/argocd/git"      { capabilities = ["read"] }
 HCL
 ```
@@ -179,8 +183,8 @@ docker exec \
   -e VAULT_TOKEN=<root token from docker logs> \
   vault-local \
   sh -c 'vault write auth/kubernetes/role/cino-backend \
-    bound_service_account_names="cino-bar-external-secrets" \
-    bound_service_account_namespaces="cino-bar" \
+    bound_service_account_names="cino-bar" \
+    bound_service_account_namespaces="external-secrets" \
     policies="cino-backend" \
     ttl="1h"'
 ```
@@ -203,15 +207,16 @@ Terraform installs:
 
 - Argo CD (`argocd` namespace)
 - External Secrets Operator (`external-secrets` namespace)
-- Service accounts and namespaces required for External Secrets (`cino-bar` / `cino-bar-external-secrets`)
+- Service account `cino-bar` in the `external-secrets` namespace to authenticate ESO against Vault
 - A `ClusterSecretStore` pointing to Vault
 - Argo CD applications that track `infrastructure/` and `applications/`
 
-Because Vault is already configured, External Secrets should transition to `SecretSynced` and Argo CD will be able to clone the repository without manual intervention. Auto-sync is enabled, but you can trigger an immediate comparison without the CLI:
+Because Vault is already configured, External Secrets should transition to `SecretSynced` and Argo CD will be able to clone the repository without manual intervention. If you need to confirm, run `kubectl get clustersecretstore vault-cino -o yaml` and check that `status.conditions[*].type=Ready` is `True`. Auto-sync is enabled, but you can trigger an immediate comparison without the CLI:
 
 ```bash
 kubectl -n argocd patch application infrastructure --type merge -p '{"metadata":{"annotations":{"argocd.argoproj.io/refresh":"hard"}}}'
-kubectl -n argocd patch application cino-bar-apps --type merge -p '{"metadata":{"annotations":{"argocd.argoproj.io/refresh":"hard"}}}'
+kubectl -n argocd patch application cino-bar-apps-prod --type merge -p '{"metadata":{"annotations":{"argocd.argoproj.io/refresh":"hard"}}}'
+kubectl -n argocd patch application cino-bar-apps-staging --type merge -p '{"metadata":{"annotations":{"argocd.argoproj.io/refresh":"hard"}}}'
 ```
 
 If you prefer using the CLI, grab the admin password and sync manually:
@@ -221,7 +226,8 @@ kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.pas
 kubectl -n argocd port-forward svc/argocd-server 8080:80 &
 argocd login localhost:8080 --username admin --password <ARGOCD_ADMIN_PASSWORD> --insecure
 argocd app sync infrastructure
-argocd app sync cino-bar-apps
+argocd app sync cino-bar-apps-prod
+argocd app sync cino-bar-apps-staging
 ```
 
 ---
@@ -231,7 +237,7 @@ argocd app sync cino-bar-apps
 Add the following entries so your workstation resolves the application hosts to the k3d load balancer:
 
 ```
-127.0.0.1 cinobar.dev www.cinobar.dev api.cinobar.dev
+127.0.0.1 cinobar.dev www.cinobar.dev api.cinobar.dev staging-cinobar.dev www.staging-cinobar.dev api.staging-cinobar.dev
 ```
 
 If you are exposing your cluster through another address, map these hostnames to that IP instead.
@@ -247,22 +253,31 @@ Run the checks below after Argo CD finishes syncing.
 ### 7.1 External Secrets and Vault
 
 ```bash
-kubectl describe externalsecret mysql-credentials -n cino-bar
-kubectl get secret mysql-credentials -n cino-bar -o yaml
+kubectl describe externalsecret mysql-credentials -n infrastructure
+kubectl get secret mysql-credentials -n infrastructure -o yaml
+kubectl describe externalsecret mysql-credentials-staging -n infrastructure
+kubectl get secret mysql-credentials-staging -n infrastructure -o yaml
 ```
 
-Expect the ExternalSecret to report `SecretSynced` and the generated secret to contain a `password` field.
+Expect both ExternalSecrets to report `SecretSynced` and the generated secrets to contain a `password` field.
 
 ### 7.2 Pods and services
 
+Check production and staging namespaces:
+
 ```bash
-kubectl get pods -n cino-bar
-kubectl get svc -n cino-bar
-kubectl get ingress -n cino-bar
-kubectl get middleware -n cino-bar
+kubectl get pods -n cino-bar-prod
+kubectl get svc -n cino-bar-prod
+kubectl get ingress -n cino-bar-prod
+kubectl get middleware -n cino-bar-prod
+
+kubectl get pods -n cino-bar-staging
+kubectl get svc -n cino-bar-staging
+kubectl get ingress -n cino-bar-staging
+kubectl get middleware -n cino-bar-staging
 ```
 
-You should see two frontend pods, two backend pods, and two ingresses: one for `cinobar.dev` (frontend) and one for `api.cinobar.dev` (backend).
+Each namespace should show two frontend pods, two backend pods, and corresponding ingresses (`cinobar.dev` / `www.cinobar.dev` for prod, `staging-cinobar.dev` / `www.staging-cinobar.dev` for staging, plus `api.*`).
 
 ### 7.3 HTTP checks
 
@@ -272,12 +287,17 @@ Use `curl` with `--resolve` to hit the endpoints through Traefik. The `-k` flag 
 curl -k --resolve cinobar.dev:443:127.0.0.1 https://cinobar.dev/
 curl -k --resolve api.cinobar.dev:443:127.0.0.1 https://api.cinobar.dev/beverages
 curl -k --resolve api.cinobar.dev:443:127.0.0.1 https://api.cinobar.dev/api/v1/beverages
+
+curl -k --resolve staging-cinobar.dev:443:127.0.0.1 https://staging-cinobar.dev/
+curl -k --resolve api.staging-cinobar.dev:443:127.0.0.1 https://api.staging-cinobar.dev/beverages
+curl -k --resolve api.staging-cinobar.dev:443:127.0.0.1 https://api.staging-cinobar.dev/api/v1/beverages
 ```
 
-The backend rewrite ensures both URLs return the same JSON payload. For database connectivity, tail the backend logs:
+The backend rewrite ensures each API hostname returns the same JSON payload. For database connectivity, tail the backend logs:
 
 ```bash
-kubectl logs deploy/cino-bar-backend -n cino-bar | tail
+kubectl logs deploy/cino-bar-backend -n cino-bar-prod | tail
+kubectl logs deploy/cino-bar-backend -n cino-bar-staging | tail
 ```
 
 ---
@@ -286,8 +306,11 @@ kubectl logs deploy/cino-bar-backend -n cino-bar | tail
 
 - **Rotate database password:**
   ```bash
-  vault kv put secret/cino/prod/backend DB_PASSWORD="new-password"
-  kubectl get secret mysql-credentials -n cino-bar -o jsonpath='{.data.password}' | base64 -d
+  vault kv put secret/cino/prod/backend DB_PASSWORD="new-prod-password"
+  kubectl get secret mysql-credentials -n infrastructure -o jsonpath='{.data.password}' | base64 -d
+
+  vault kv put secret/cino/staging/backend DB_PASSWORD="new-staging-password"
+  kubectl get secret mysql-credentials-staging -n infrastructure -o jsonpath='{.data.password}' | base64 -d
   ```
   External Secrets Operator refreshes the Kubernetes secret automatically (default every hour).
 
@@ -296,7 +319,8 @@ kubectl logs deploy/cino-bar-backend -n cino-bar | tail
 - **Sync applications:**
   ```bash
   argocd app list
-  argocd app sync cino-bar-apps
+  argocd app sync cino-bar-apps-prod
+  argocd app sync cino-bar-apps-staging
   ```
 
 - **Add new beverages:** use the frontend UI or call the API directly:
@@ -331,9 +355,9 @@ kubectl logs deploy/cino-bar-backend -n cino-bar | tail
 | --- | --- |
 | Pages never load | Ensure `/etc/hosts` (or DNS) points the domains to the cluster IP; confirm `kubectl get ingress -A` lists `cinobar.dev` with an address. |
 | TLS errors | Either trust the self-signed cert or replace `cinobar-dev-cert` with a trusted certificate. |
-| 404 from backend | Confirm the Traefik middleware exists (`kubectl get middleware -n cino-bar`) and that the ingress annotation references `<namespace>-cino-bar-backend-prefix@kubernetescrd`. |
-| Vault authentication failures | `kubectl describe externalsecret mysql-credentials -n cino-bar` shows ESO events. Ensure the Vault Kubernetes auth role `cino-backend` references the `cino-bar-external-secrets` service account. |
-| Argo CD stuck `Progressing` | Check `kubectl describe application cino-bar-apps -n argocd` and Argo CD controller logs. Re-sync or inspect Helm errors. |
+| 404 from backend | Confirm the Traefik middleware exists (`kubectl get middleware -n cino-bar-prod` or `-n cino-bar-staging`) and that the ingress annotation references `<namespace>-cino-bar-backend-prefix@kubernetescrd`. |
+| Vault authentication failures | `kubectl describe externalsecret mysql-credentials -n infrastructure` shows ESO events. Ensure the Vault Kubernetes auth role `cino-backend` references the `cino-bar` service account in the `external-secrets` namespace and that the policy allows `secret/cino/prod/backend` and `secret/cino/staging/backend`. Use `kubectl annotate clustersecretstore vault-cino external-secrets.io/refresh=$(date +%s) --overwrite` to force a reconcile after updating Vault. |
+| Argo CD stuck `Progressing` | Check `kubectl describe application cino-bar-apps-prod -n argocd` (or `...-staging`) and Argo CD controller logs. Re-sync or inspect Helm errors. |
 | Database errors | Verify the MySQL service in `infrastructure/mysql.yaml` is running (`kubectl get pods -n infrastructure`). |
 
 Collect cluster diagnostics with:
